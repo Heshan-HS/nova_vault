@@ -41,8 +41,8 @@ Pre-built installers and APKs are published on the [**Releases**](https://github
 
 | Platform | Package | Direct Download |
 | :--- | :--- | :--- |
-| **Windows (x64)** | `NovaVault-v1.0.1-Setup.exe` | [Download Windows Installer](https://github.com/Heshan-HS/nova_vault/releases/download/v1.0.1/NovaVault-v1.0.1-Setup.exe) |
-| **Android** | `NovaVault-v1.0.1-Android.apk` | [Download Android APK](https://github.com/Heshan-HS/nova_vault/releases/download/v1.0.1/NovaVault-v1.0.1-Android.apk) |
+| **Windows (x64)** | `NovaVault-v1.0.2-Setup.exe` | [Download Windows Installer](https://github.com/Heshan-HS/nova_vault/releases/download/v1.0.2/NovaVault-v1.0.2-Setup.exe) |
+| **Android** | `NovaVault-v1.0.2-Android.apk` | [Download Android APK](https://github.com/Heshan-HS/nova_vault/releases/download/v1.0.2/NovaVault-v1.0.2-Android.apk) |
 
 > **Tip:** Both platforms sync automatically with the same Google account — sign in with Google on Windows and Android to keep your vault in sync.
 

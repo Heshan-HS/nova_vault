@@ -25,6 +25,8 @@ class VaultService extends ChangeNotifier {
   bool _hasMasterPassword = false;
   bool _canUseDeviceLock = false;
   String _masterPassword = '';
+  bool _hasPendingSync = false;
+  List<String> _deletedIds = [];
 
   List<VaultItem> get items => _items;
   VaultItem? get selectedItem => _selectedItem;
@@ -38,6 +40,8 @@ class VaultService extends ChangeNotifier {
   bool get biometricEnabled => _biometricEnabled;
   bool get hasMasterPassword => _hasMasterPassword;
   bool get canUseDeviceLock => _canUseDeviceLock;
+  bool get hasPendingSync => _hasPendingSync;
+  List<String> get deletedIds => List.unmodifiable(_deletedIds);
 
   // Counters
   int get totalItems => _items.length;
@@ -157,6 +161,8 @@ class VaultService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final normalized = email.trim().toLowerCase();
+      _hasPendingSync = prefs.getBool('nv_pending_sync_$normalized') ?? false;
+      _deletedIds = prefs.getStringList('nv_deleted_ids_$normalized') ?? [];
       final userKey = 'nv_vault_items_$normalized';
       final savedData = prefs.getString(userKey);
 
@@ -186,15 +192,29 @@ class VaultService extends ChangeNotifier {
     }
   }
 
-  Future<void> setAllItems(List<VaultItem> newItems) async {
+  Future<void> setAllItems(List<VaultItem> newItems, {bool syncToCloud = true}) async {
     _items = newItems;
     final visibleList = filteredItems;
     _selectedItem = visibleList.isNotEmpty ? visibleList.first : null;
-    await _saveToStorage();
+    await _saveToStorage(syncToCloud: syncToCloud);
     notifyListeners();
   }
 
-  Future<void> _saveToStorage() async {
+  Future<void> markSynced() async {
+    _hasPendingSync = false;
+    _deletedIds.clear();
+    try {
+      final userEmail = AuthSyncService().userEmail;
+      if (userEmail.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final normalized = userEmail.trim().toLowerCase();
+        await prefs.setBool('nv_pending_sync_$normalized', false);
+        await prefs.remove('nv_deleted_ids_$normalized');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveToStorage({bool syncToCloud = true, String? deletedId}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final jsonList = _items.map((e) => e.toJson()).toList();
@@ -202,11 +222,23 @@ class VaultService extends ChangeNotifier {
 
       final userEmail = AuthSyncService().userEmail;
       if (userEmail.isNotEmpty) {
-        final userKey = 'nv_vault_items_${userEmail.trim().toLowerCase()}';
+        final normalized = userEmail.trim().toLowerCase();
+        final userKey = 'nv_vault_items_$normalized';
         await prefs.setString(userKey, jsonString);
+
+        if (syncToCloud) {
+          _hasPendingSync = true;
+          await prefs.setBool('nv_pending_sync_$normalized', true);
+          if (deletedId != null && !_deletedIds.contains(deletedId)) {
+            _deletedIds.add(deletedId);
+            await prefs.setStringList('nv_deleted_ids_$normalized', _deletedIds);
+          }
+        }
       }
 
-      AuthSyncService().syncNow(_items);
+      if (syncToCloud) {
+        AuthSyncService().syncNow(_items);
+      }
     } catch (_) {}
   }
 
@@ -276,7 +308,7 @@ class VaultService extends ChangeNotifier {
     if (_selectedItem?.id == id) {
       _selectedItem = _items.isNotEmpty ? _items.first : null;
     }
-    await _saveToStorage();
+    await _saveToStorage(deletedId: id);
     notifyListeners();
   }
 

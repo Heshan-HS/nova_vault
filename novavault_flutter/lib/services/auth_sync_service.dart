@@ -366,9 +366,31 @@ class AuthSyncService extends ChangeNotifier {
     }
   }
 
-  /// Triggers Cloud Sync between PC & Mobile
+  /// Triggers Cloud Sync between PC & Mobile after local changes
   Future<void> syncNow(List<VaultItem> items) async {
-    await syncWithGoogleDrive(items);
+    await syncWithGoogleDrive(items, pushLocalChanges: true);
+  }
+
+  /// Helper that adds Authorization header and automatically refreshes on 401
+  Future<({int statusCode, String body})> _httpWithAuthRetry(
+    String url, {
+    String method = 'GET',
+    Map<String, String>? extraHeaders,
+    String? body,
+  }) async {
+    var headers = <String, String>{
+      'Authorization': 'Bearer $_accessToken',
+      ...?extraHeaders,
+    };
+    var res = await _httpRequest(url, method: method, headers: headers, body: body);
+    if (res.statusCode == 401 && await _refreshAccessToken()) {
+      headers = <String, String>{
+        'Authorization': 'Bearer $_accessToken',
+        ...?extraHeaders,
+      };
+      res = await _httpRequest(url, method: method, headers: headers, body: body);
+    }
+    return res;
   }
 
   /// Refreshes expired OAuth access token using stored refresh token
@@ -407,8 +429,11 @@ class AuthSyncService extends ChangeNotifier {
     return false;
   }
 
-  /// Real Google Drive AppData Sync (Encrypted Vault Upload & Download)
-  Future<void> syncWithGoogleDrive(List<VaultItem> items) async {
+  /// Real Google Drive AppData Sync (2-Way Encrypted Vault Upload & Download)
+  Future<void> syncWithGoogleDrive(
+    List<VaultItem> items, {
+    bool pushLocalChanges = false,
+  }) async {
     if (_accessToken == null || _accessToken!.isEmpty) {
       _syncStatus = 'Not signed in';
       notifyListeners();
@@ -416,12 +441,14 @@ class AuthSyncService extends ChangeNotifier {
     }
 
     _isSyncing = true;
-    _syncStatus = 'Syncing to Google Drive AppData...';
+    _syncStatus = 'Syncing with Google Drive AppData...';
     notifyListeners();
 
     try {
+      var workingItems = List<VaultItem>.from(items);
+
       // 1. If local items is empty, try to restore from this user's local cache first
-      if (items.isEmpty && _userEmail.isNotEmpty) {
+      if (workingItems.isEmpty && _userEmail.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         final userKey = 'nv_vault_items_${_userEmail.trim().toLowerCase()}';
         final localCache = prefs.getString(userKey);
@@ -429,8 +456,8 @@ class AuthSyncService extends ChangeNotifier {
           final List<dynamic> list = jsonDecode(localCache);
           final restored = list.map((e) => VaultItem.fromJson(e as Map<String, dynamic>)).toList();
           if (restored.isNotEmpty) {
-            await VaultService().setAllItems(restored);
-            items = restored;
+            await VaultService().setAllItems(restored, syncToCloud: false);
+            workingItems = restored;
           }
         }
       }
@@ -438,16 +465,9 @@ class AuthSyncService extends ChangeNotifier {
       // 2. Check if backup file already exists in user's private Google Drive appDataFolder
       String? fileId = _googleDriveFileId;
       if (fileId == null || fileId.isEmpty) {
-        var listResponse = await _httpRequest(
+        final listResponse = await _httpWithAuthRetry(
           'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name=%27novavault_vault.enc%27&fields=files(id,name)',
-          headers: {'Authorization': 'Bearer $_accessToken'},
         );
-        if (listResponse.statusCode == 401 && await _refreshAccessToken()) {
-          listResponse = await _httpRequest(
-            'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name=%27novavault_vault.enc%27&fields=files(id,name)',
-            headers: {'Authorization': 'Bearer $_accessToken'},
-          );
-        }
 
         if (listResponse.statusCode == 200) {
           final listData = jsonDecode(listResponse.body);
@@ -471,52 +491,77 @@ class AuthSyncService extends ChangeNotifier {
         }
       }
 
-      // 3. If local items is STILL empty but Google Drive has a backup, download and restore!
-      if (items.isEmpty && fileId != null && fileId.isNotEmpty) {
-        final downloadResponse = await _httpRequest(
+      // 3. Always download existing Drive backup to pull updates from other devices
+      final hasPending = pushLocalChanges || VaultService().hasPendingSync;
+      if (fileId != null && fileId.isNotEmpty) {
+        final downloadResponse = await _httpWithAuthRetry(
           'https://www.googleapis.com/drive/v3/files/$fileId?alt=media',
-          headers: {'Authorization': 'Bearer $_accessToken'},
         );
-        if (downloadResponse.statusCode == 200 && downloadResponse.body.isNotEmpty && downloadResponse.body != '[]') {
+        if (downloadResponse.statusCode == 200 &&
+            downloadResponse.body.isNotEmpty &&
+            downloadResponse.body != '[]') {
           final List<dynamic> downloadedList = jsonDecode(downloadResponse.body);
-          final downloadedItems = downloadedList.map((e) => VaultItem.fromJson(e as Map<String, dynamic>)).toList();
-          if (downloadedItems.isNotEmpty) {
-            await VaultService().setAllItems(downloadedItems);
-            items = downloadedItems;
+          final driveItems = downloadedList
+              .map((e) => VaultItem.fromJson(e as Map<String, dynamic>))
+              .toList();
+
+          if (!hasPending && driveItems.isNotEmpty) {
+            // No unpushed local edits: Drive copy is authoritative!
+            await VaultService().setAllItems(driveItems, syncToCloud: false);
+            await VaultService().markSynced();
             final prefs = await SharedPreferences.getInstance();
             if (_userEmail.isNotEmpty) {
-              await prefs.setString('nv_vault_items_${_userEmail.trim().toLowerCase()}', downloadResponse.body);
+              await prefs.setString(
+                'nv_vault_items_${_userEmail.trim().toLowerCase()}',
+                downloadResponse.body,
+              );
+              await prefs.setString('nv_last_sync', DateTime.now().toIso8601String());
             }
             _lastSyncTime = DateTime.now();
-            _syncStatus = 'Synced (${downloadedItems.length} items restored from Drive)';
+            _syncStatus = 'Synced with Google Drive (${driveItems.length} items)';
             notifyListeners();
             return;
+          }
+
+          if (hasPending && driveItems.isNotEmpty) {
+            // Local device has unpushed edits: merge any new items added on other devices
+            final localIds = workingItems.map((i) => i.id).toSet();
+            final deletedIds = VaultService().deletedIds.toSet();
+            final toMerge = driveItems
+                .where((d) => !localIds.contains(d.id) && !deletedIds.contains(d.id))
+                .toList();
+            if (toMerge.isNotEmpty) {
+              workingItems = [...workingItems, ...toMerge];
+              await VaultService().setAllItems(workingItems, syncToCloud: false);
+            }
           }
         }
       }
 
-      final jsonPayload = jsonEncode(items.map((i) => i.toJson()).toList());
+      final jsonPayload = jsonEncode(workingItems.map((i) => i.toJson()).toList());
 
       // Only cache under current user's scoped key
-      if (items.isNotEmpty && _userEmail.isNotEmpty) {
+      if (workingItems.isNotEmpty && _userEmail.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('nv_vault_items_${_userEmail.trim().toLowerCase()}', jsonPayload);
       }
 
       if (fileId != null && fileId.isNotEmpty) {
         // Update existing backup in Google Drive
-        final updateResponse = await _httpRequest(
+        final updateResponse = await _httpWithAuthRetry(
           'https://www.googleapis.com/upload/drive/v3/files/$fileId?uploadType=media',
           method: 'PATCH',
-          headers: {
-            'Authorization': 'Bearer $_accessToken',
-            'Content-Type': 'application/json',
-          },
+          extraHeaders: {'Content-Type': 'application/json'},
           body: jsonPayload,
         );
         if (updateResponse.statusCode == 200) {
+          await VaultService().markSynced();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('nv_last_sync', DateTime.now().toIso8601String());
           _lastSyncTime = DateTime.now();
-          _syncStatus = 'Synced with Google Drive (${items.length} items)';
+          _syncStatus = 'Synced with Google Drive (${workingItems.length} items)';
+        } else {
+          _syncStatus = 'Drive update failed (${updateResponse.statusCode})';
         }
       } else {
         // Create new backup file in Google Drive AppData folder
@@ -537,13 +582,10 @@ class AuthSyncService extends ChangeNotifier {
           ..write('$jsonPayload\r\n')
           ..write('--$boundary--\r\n');
 
-        final createResponse = await _httpRequest(
+        final createResponse = await _httpWithAuthRetry(
           createUri.toString(),
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer $_accessToken',
-            'Content-Type': 'multipart/related; boundary=$boundary',
-          },
+          extraHeaders: {'Content-Type': 'multipart/related; boundary=$boundary'},
           body: body.toString(),
         );
 
@@ -552,8 +594,10 @@ class AuthSyncService extends ChangeNotifier {
           _googleDriveFileId = resData['id'];
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('nv_drive_file_id_${_userEmail.trim().toLowerCase()}', _googleDriveFileId!);
+          await prefs.setString('nv_last_sync', DateTime.now().toIso8601String());
+          await VaultService().markSynced();
           _lastSyncTime = DateTime.now();
-          _syncStatus = 'Synced with Google Drive (${items.length} items)';
+          _syncStatus = 'Synced with Google Drive (${workingItems.length} items)';
         } else {
           _syncStatus = 'Drive upload failed (${createResponse.statusCode})';
         }

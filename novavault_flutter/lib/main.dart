@@ -16,6 +16,9 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await VaultService().init();
   await AuthSyncService().init();
+  if (AuthSyncService().isLoggedIn) {
+    AuthSyncService().syncWithGoogleDrive(VaultService().items);
+  }
   runApp(const NovaVaultApp());
 }
 
