@@ -26,6 +26,7 @@ class VaultService extends ChangeNotifier {
   bool _canUseDeviceLock = false;
   String _masterPassword = '';
   bool _hasPendingSync = false;
+  bool _customOrderEnabled = false;
   List<String> _deletedIds = [];
 
   List<VaultItem> get items => _items;
@@ -96,12 +97,14 @@ class VaultService extends ChangeNotifier {
       return true;
     }).toList();
 
-    // Prioritize Starred (Favorite) items to the very top
-    list.sort((a, b) {
-      if (a.favourite && !b.favourite) return -1;
-      if (!a.favourite && b.favourite) return 1;
-      return 0;
-    });
+    // Prioritize Starred (Favorite) items to the top unless user set a custom order
+    if (!_customOrderEnabled) {
+      list.sort((a, b) {
+        if (a.favourite && !b.favourite) return -1;
+        if (!a.favourite && b.favourite) return 1;
+        return 0;
+      });
+    }
 
     return list;
   }
@@ -162,6 +165,7 @@ class VaultService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final normalized = email.trim().toLowerCase();
       _hasPendingSync = prefs.getBool('nv_pending_sync_$normalized') ?? false;
+      _customOrderEnabled = prefs.getBool('nv_custom_order_$normalized') ?? false;
       _deletedIds = prefs.getStringList('nv_deleted_ids_$normalized') ?? [];
       final userKey = 'nv_vault_items_$normalized';
       final savedData = prefs.getString(userKey);
@@ -287,6 +291,45 @@ class VaultService extends ChangeNotifier {
   Future<void> addItem(VaultItem item) async {
     _items.insert(0, item);
     _selectedItem = item;
+    await _saveToStorage();
+    notifyListeners();
+  }
+
+  /// Reorders items in [_items] matching a drag-and-drop move in [visibleList]
+  Future<void> reorderFilteredItems(
+    int oldIndex,
+    int newIndex,
+    List<VaultItem> visibleList,
+  ) async {
+    if (oldIndex < 0 || oldIndex >= visibleList.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex >= visibleList.length || oldIndex == newIndex) {
+      return;
+    }
+
+    final movedItem = visibleList[oldIndex];
+    final targetId = visibleList[newIndex].id;
+
+    _items.removeWhere((i) => i.id == movedItem.id);
+    final targetIdx = _items.indexWhere((i) => i.id == targetId);
+    if (targetIdx == -1) {
+      _items.insert(0, movedItem);
+    } else if (oldIndex < newIndex) {
+      _items.insert(targetIdx + 1, movedItem);
+    } else {
+      _items.insert(targetIdx, movedItem);
+    }
+
+    _customOrderEnabled = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userEmail = AuthSyncService().userEmail;
+      final orderKey = userEmail.isNotEmpty
+          ? 'nv_custom_order_${userEmail.trim().toLowerCase()}'
+          : 'nv_custom_order_local';
+      await prefs.setBool(orderKey, true);
+    } catch (_) {}
+
     await _saveToStorage();
     notifyListeners();
   }

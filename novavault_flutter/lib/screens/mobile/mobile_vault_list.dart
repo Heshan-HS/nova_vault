@@ -36,6 +36,7 @@ class _MobileVaultListState extends State<MobileVaultList>
   String _searchQuery = '';
   String _activeFilter = 'All';
   String? _copiedId;
+  bool _isReordering = false;
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
   late AnimationController _searchAnim;
@@ -224,32 +225,106 @@ class _MobileVaultListState extends State<MobileVaultList>
               ),
             ),
 
-            // ── Fixed Section Header ─────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-              child: Row(
-                children: [
-                  Text(
-                    _activeFilter == 'All' ? 'All items' : _activeFilter,
-                    style: GoogleFonts.inter(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: widget.theme.muted,
-                      letterSpacing: 0.6,
+            // ── Fixed Section Header / Reorder Banner ────────
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: _isReordering
+                  ? Container(
+                      key: const ValueKey('reorder-bar'),
+                      margin: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? const Color(0xFF0D2352)
+                            : NovaTokens.royal700.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: NovaTokens.royal700.withValues(alpha: 0.28),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.drag_indicator_rounded,
+                            size: 17,
+                            color: isDark ? const Color(0xFF6FA8FF) : NovaTokens.royal700,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Drag items to reorder',
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: widget.theme.text,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              setState(() => _isReordering = false);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF059669),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.check_rounded,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Done',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Padding(
+                      key: const ValueKey('normal-bar'),
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                      child: Row(
+                        children: [
+                          Text(
+                            _activeFilter == 'All' ? 'All items' : _activeFilter,
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: widget.theme.muted,
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${items.length}',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: widget.theme.muted,
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${items.length}',
-                    style: GoogleFonts.inter(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: widget.theme.muted,
-                      letterSpacing: 0.6,
-                    ),
-                  ),
-                ],
-              ),
             ),
 
             Divider(
@@ -275,39 +350,81 @@ class _MobileVaultListState extends State<MobileVaultList>
                         ),
                       ),
                     )
-                  : RefreshIndicator(
-                      color: NovaTokens.royal700,
-                      onRefresh: () async {
-                        if (AuthSyncService().isLoggedIn) {
-                          await AuthSyncService().syncWithGoogleDrive(VaultService().items);
-                        }
-                      },
-                      child: ListView.builder(
-                        controller: _scrollController,
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
-                        ),
-                        padding: EdgeInsets.fromLTRB(16, 10, 16, widget.bottomPadding),
-                        itemCount: items.length,
-                        itemBuilder: (context, i) {
-                          final item = items[i];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _VaultListRow(
-                              item: item,
-                              theme: widget.theme,
-                              isCopied: _copiedId == item.id,
-                              onTap: () => widget.onSelectItem(item),
-                              onCopy: () => _copyPassword(item),
-                              onFavToggle: () {
-                                VaultService().toggleFavourite(item.id);
-                                setState(() {});
-                              },
+                  : _isReordering
+                      ? ReorderableListView.builder(
+                          buildDefaultDragHandles: false,
+                          padding: EdgeInsets.fromLTRB(16, 10, 16, widget.bottomPadding),
+                          itemCount: items.length,
+                          proxyDecorator: (child, index, animation) {
+                            return Material(
+                              color: Colors.transparent,
+                              elevation: 8,
+                              shadowColor: Colors.black.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(12),
+                              child: child,
+                            );
+                          },
+                          onReorder: (oldIndex, newIndex) {
+                            HapticFeedback.selectionClick();
+                            VaultService().reorderFilteredItems(oldIndex, newIndex, items);
+                          },
+                          itemBuilder: (context, i) {
+                            final item = items[i];
+                            return Padding(
+                              key: ValueKey(item.id),
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: ReorderableDragStartListener(
+                                index: i,
+                                child: _VaultListRow(
+                                  item: item,
+                                  theme: widget.theme,
+                                  isCopied: _copiedId == item.id,
+                                  isReordering: true,
+                                  onTap: () {},
+                                  onCopy: () {},
+                                  onFavToggle: () {},
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      : RefreshIndicator(
+                          color: NovaTokens.royal700,
+                          onRefresh: () async {
+                            if (AuthSyncService().isLoggedIn) {
+                              await AuthSyncService().syncWithGoogleDrive(VaultService().items);
+                            }
+                          },
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            physics: const BouncingScrollPhysics(
+                              parent: AlwaysScrollableScrollPhysics(),
                             ),
-                          );
-                        },
-                      ),
-                    ),
+                            padding: EdgeInsets.fromLTRB(16, 10, 16, widget.bottomPadding),
+                            itemCount: items.length,
+                            itemBuilder: (context, i) {
+                              final item = items[i];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _VaultListRow(
+                                  item: item,
+                                  theme: widget.theme,
+                                  isCopied: _copiedId == item.id,
+                                  onTap: () => widget.onSelectItem(item),
+                                  onLongPress: () {
+                                    HapticFeedback.mediumImpact();
+                                    setState(() => _isReordering = true);
+                                  },
+                                  onCopy: () => _copyPassword(item),
+                                  onFavToggle: () {
+                                    VaultService().toggleFavourite(item.id);
+                                    setState(() {});
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                        ),
             ),
           ],
         ),
@@ -614,7 +731,9 @@ class _VaultListRow extends StatelessWidget {
   final VaultItem item;
   final NovaTheme theme;
   final bool isCopied;
+  final bool isReordering;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final VoidCallback onCopy;
   final VoidCallback onFavToggle;
 
@@ -622,7 +741,9 @@ class _VaultListRow extends StatelessWidget {
     required this.item,
     required this.theme,
     required this.isCopied,
+    this.isReordering = false,
     required this.onTap,
+    this.onLongPress,
     required this.onCopy,
     required this.onFavToggle,
   });
@@ -636,7 +757,8 @@ class _VaultListRow extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: isReordering ? null : onTap,
+        onLongPress: isReordering ? null : onLongPress,
         borderRadius: BorderRadius.circular(12),
         splashColor: theme.accent.withOpacity(0.06),
         highlightColor: theme.accent.withOpacity(0.04),
@@ -729,9 +851,25 @@ class _VaultListRow extends StatelessWidget {
                   ],
                 ),
               ),
-              // Copy button
-              GestureDetector(
-                onTap: onCopy,
+              // Copy button or Drag handle in reorder mode
+              if (isReordering)
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: theme.selectedBg,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: theme.selectedBorder, width: 1),
+                  ),
+                  child: Icon(
+                    Icons.drag_indicator_rounded,
+                    size: 18,
+                    color: theme.accent,
+                  ),
+                )
+              else
+                GestureDetector(
+                  onTap: onCopy,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 160),
                   width: 32,
