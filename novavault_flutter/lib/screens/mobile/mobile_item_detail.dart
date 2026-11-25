@@ -188,6 +188,9 @@ class _MobileItemDetailState extends State<MobileItemDetail> {
                       children: [
                         ItemAvatar(
                           name: item.name,
+                          category: item.category,
+                          username: item.username,
+                          url: item.url,
                           size: 56,
                           radius: 14,
                           isHero: true,

@@ -657,7 +657,14 @@ class _VaultListRow extends StatelessWidget {
           child: Row(
             children: [
               // Avatar
-              ItemAvatar(name: item.name, size: 40, radius: 10),
+              ItemAvatar(
+                name: item.name,
+                category: item.category,
+                username: item.username,
+                url: item.url,
+                size: 40,
+                radius: 10,
+              ),
               const SizedBox(width: 12),
               // Name + username
               Expanded(

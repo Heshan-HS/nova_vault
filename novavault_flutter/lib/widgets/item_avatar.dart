@@ -85,6 +85,13 @@ class ItemAvatar extends StatelessWidget {
       return BrandType.discord;
     }
 
+    // Any email / Gmail item (contains '@' in name or username, or 'email' in name)
+    if (lowerName.contains('@') ||
+        lowerUser.contains('@') ||
+        lowerName.contains('email')) {
+      return BrandType.google;
+    }
+
     return BrandType.generic;
   }
 
