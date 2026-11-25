@@ -1,0 +1,46 @@
+# Personal / local scripts & backups (never commit)
+vault_backup_safe.json
+inject_all_2fa.py
+*.env
+.env*
+stderr.txt
+stdout.txt
+
+# Compiled release binaries (upload to GitHub Releases instead)
+dist/
+
+# Flutter & Dart
+novavault_flutter/.dart_tool/
+novavault_flutter/.flutter-plugins-dependencies
+novavault_flutter/.pub-cache/
+novavault_flutter/.pub/
+novavault_flutter/build/
+novavault_flutter/coverage/
+novavault_flutter/app.*.symbols
+novavault_flutter/app.*.map.json
+novavault_flutter/android/app/debug/
+novavault_flutter/android/app/profile/
+novavault_flutter/android/app/release/
+novavault_flutter/android/.gradle/
+novavault_flutter/android/local.properties
+novavault_flutter/ios/Flutter/.last_build_id
+
+# Keystores & signing secrets
+*.jks
+*.keystore
+key.properties
+
+# Web companion
+novavault-web/node_modules/
+novavault-web/dist/
+
+# IDE & OS
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.log
+*.swp
+.DS_Store
+Thumbs.db
